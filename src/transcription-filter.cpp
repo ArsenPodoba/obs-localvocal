@@ -272,6 +272,27 @@ void transcription_filter_update(void *data, obs_data_t *s)
 		}
 	}
 
+	// Read "Max length of file line"
+	gf->file_output_max_line_length = (int)obs_data_get_int(s, "file_output_max_line_length");
+
+	if (gf->file_output_max_line_length < 20) {
+		gf->file_output_max_line_length = 20;
+	}
+
+	if (gf->file_output_max_line_length > 200) {
+		gf->file_output_max_line_length = 200;
+	}
+
+	// Output file clearing on start
+	gf->file_output_clearing_on_start_enabled = obs_data_get_bool(s, "file_output_clearing_on_start");
+
+	// Clear files once per session after we know the output path (if enabled)
+	if (gf->file_output_clearing_on_start_enabled
+		&& !gf->cleared_files_on_start && !gf->output_file_path.empty()) {
+		clear_output_files_on_start(gf->output_file_path, language_codes_to_whisper);
+		gf->cleared_files_on_start = true;
+	}
+
 	if (new_buffered_output) {
 		obs_log(gf->log_level, "buffered_output enable");
 		if (!gf->buffered_output || !gf->captions_monitor.isEnabled()) {
@@ -497,6 +518,7 @@ void *transcription_filter_create(obs_data_t *settings, obs_source_t *filter)
 	gf->process_while_muted = obs_data_get_bool(settings, "process_while_muted");
 	gf->buffered_output = obs_data_get_bool(settings, "buffered_output");
 	gf->initial_creation = true;
+	gf->cleared_files_on_start = false;
 
 	for (size_t i = 0; i < gf->channels; i++) {
 		circlebuf_init(&gf->input_buffers[i]);

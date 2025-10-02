@@ -110,6 +110,13 @@ struct transcription_filter_data {
 	uint64_t last_sub_render_time;
 	bool cleared_last_sub;
 
+	// Clear only once per session
+	bool cleared_files_on_start;
+	// Max length of file line
+	int file_output_max_line_length;
+  // Output file clearing on start option
+  bool file_output_clearing_on_start_enabled;
+
 	/* PCM buffers */
 	float *copy_buffers[MAX_PREPROC_CHANNELS];
 	struct circlebuf info_buffer;

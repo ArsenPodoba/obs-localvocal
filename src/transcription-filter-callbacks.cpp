@@ -144,9 +144,11 @@ void send_sentence_to_file(struct transcription_filter_data *gf,
 			gf->output_file_path.c_str());
 		// Write raw sentence to text file (non-srt format)
 		try {
+			const auto last_line_length = get_last_line_length(file_path);
 			std::ofstream output_file(file_path, openmode);
-			output_file << sentence << std::endl;
-			output_file.close();
+			for (const auto& sentence : split_into_lines(sentence, gf->file_output_max_line_length, last_line_length)) {
+				output_file << sentence;
+			}
 		} catch (const std::ofstream::failure &e) {
 			obs_log(LOG_ERROR, "Exception opening/writing/closing file: %s", e.what());
 		}

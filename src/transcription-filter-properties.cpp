@@ -117,7 +117,7 @@ bool file_output_select_changed(obs_properties_t *props, obs_property_t *propert
 	const bool show_hide = obs_data_get_bool(settings, "file_output_enable");
 	for (const std::string &prop_name :
 	     {"subtitle_output_filename", "subtitle_save_srt", "truncate_output_file",
-	      "only_while_recording", "rename_file_to_match_recording", "file_output_info"}) {
+	      "only_while_recording", "rename_file_to_match_recording", "file_output_info", "file_output_max_line_length", "file_output_clearing_on_start"}) {
 		obs_property_set_visible(obs_properties_get(props, prop_name.c_str()), show_hide);
 	}
 	return true;
@@ -472,6 +472,10 @@ void add_file_output_group_properties(obs_properties_t *ppts)
 				MT_("only_while_recording"));
 	obs_properties_add_bool(file_output_group, "rename_file_to_match_recording",
 				MT_("rename_file_to_match_recording"));
+	obs_properties_add_int_slider(file_output_group, "file_output_max_line_length",
+				MT_("Max length of file line"), 20, 200, 1);
+	obs_properties_add_bool(file_output_group, "file_output_clearing_on_start",
+				MT_("Output file clearing on start"));
 	obs_property_set_modified_callback(file_output_group_prop, file_output_select_changed);
 }
 

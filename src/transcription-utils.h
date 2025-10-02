@@ -6,6 +6,10 @@
 #include <chrono>
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
+#include <map>
+#include <string>
+#include <vector>
 
 // Fix UTF8 string for Windows
 std::string fix_utf8(const std::string &str);
@@ -48,5 +52,14 @@ template<typename StringLike> StringLike trim(const StringLike &str)
 		       str_copy.end());
 	return str_copy;
 }
+
+// Clear output files on startup for given path and language codes
+void clear_output_files_on_start(const std::filesystem::path &output_file_path, const std::map<std::string, std::string> &language_codes_to_whisper);
+
+// Get the length of the last line in a file
+size_t get_last_line_length(const std::string& file_path);
+
+// Split text into lines of max length without breaking words
+std::vector<std::string> split_into_lines(const std::string &text, size_t max_len, size_t current_line_size);
 
 #endif // TRANSCRIPTION_UTILS_H

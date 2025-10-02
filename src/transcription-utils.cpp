@@ -3,6 +3,8 @@
 #include <sstream>
 #include <algorithm>
 #include <vector>
+#include <fstream>
+#include <filesystem>
 
 // clang-format off
 #define is_lead_byte(c) (((c)&0xe0) == 0xc0 || ((c)&0xf0) == 0xe0 || ((c)&0xf8) == 0xf0)
@@ -159,4 +161,84 @@ std::vector<std::string> split_words(const std::string &str_copy)
 		words.push_back(word);
 	}
 	return words;
+}
+
+void clear_output_files_on_start(const std::filesystem::path &output_file_path, const std::map<std::string, std::string> &language_codes_to_whisper)
+{
+	namespace fs = std::filesystem;
+
+	if (output_file_path.string().empty()) {
+		return;
+	}
+
+	const auto base_file_name = output_file_path.stem().string();
+	const auto fie_extension  = output_file_path.extension().string();
+	const auto file_parent_path = output_file_path.parent_path();
+
+	// main file
+	{
+		const auto output_file = std::ofstream(output_file_path.string(), std::ios::out | std::ios::trunc);
+	}
+
+	// translations — only if the file exists
+	for (const auto& [language_code, _] : language_codes_to_whisper) {
+		const auto target_language_output_file_path = file_parent_path / (base_file_name + "_" + language_code + fie_extension);
+		if (fs::exists(target_language_output_file_path)) {
+			const auto target_language_output_file = std::ofstream(target_language_output_file_path.string(), std::ios::out | std::ios::trunc);
+		}
+	}
+}
+
+size_t get_last_line_length(const std::string& file_path)
+{
+    auto file = std::ifstream(file_path, std::ios::ate);
+    if (!file.is_open())
+        return 0;
+
+    const auto file_size = file.tellg();
+    if (file_size <= 0)
+        return 0;
+
+    auto ch = char();
+    auto pos = std::streamoff(1);
+
+    for (; pos <= file_size; ++pos) {
+        file.seekg(-pos, std::ios::end);
+        file.get(ch);
+        if (ch == '\n')
+            break;
+    }
+
+    return static_cast<size_t>(pos - 1);
+}
+
+std::vector<std::string> split_into_lines(const std::string& text, size_t max_len, size_t current_line_size)
+{
+	std::vector<std::string> lines;
+	if (max_len == 0 || text.empty()) {
+		return lines;
+	}
+
+	auto iss = std::istringstream(text);
+	auto word = std::string();
+	auto segment = std::string();
+
+	while (iss >> word) {
+		const auto add_len = word.size() + (current_line_size > 0 ? 1 : 0);
+
+		if (current_line_size + add_len <= max_len) {
+			segment += (current_line_size > 0 ? " " : "") + word;
+			current_line_size += add_len;
+		} else {
+			lines.emplace_back(segment + "\n");
+			segment = word;
+			current_line_size = word.size();
+		}
+	}
+
+	if (!segment.empty()) {
+		lines.emplace_back(segment);
+	}
+
+	return lines;
 }
