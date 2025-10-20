@@ -23,6 +23,8 @@
 #include "transcription-filter-utils.h"
 #include "transcription-utils.h"
 #include "model-utils/model-downloader.h"
+#include "cloud-utils/cloud-stt.h"
+#include "whisper-utils/vad-processing.h"
 #include "whisper-utils/whisper-processing.h"
 #include "whisper-utils/whisper-language.h"
 #include "whisper-utils/whisper-model-utils.h"
@@ -83,11 +85,6 @@ struct obs_audio_data *transcription_filter_filter_audio(void *data, struct obs_
 		return audio;
 	}
 
-	if (gf->whisper_context == nullptr) {
-		// Whisper not initialized, just pass through
-		return audio;
-	}
-
 	// Check if process while muted is not enabled (e.g. the user wants to avoid processing audio
 	// when the source is muted)
 	if (!gf->process_while_muted) {
@@ -113,6 +110,32 @@ struct obs_audio_data *transcription_filter_filter_audio(void *data, struct obs_
 		info.timestamp_offset_ns = now_ns() - gf->start_timestamp_ms * 1000000;
 		circlebuf_push_back(&gf->info_buffer, &info, sizeof(info));
 		gf->wshiper_thread_cv.notify_one();
+	}
+
+	if (gf->google_stt && gf->resampler_to_whisper) {
+		uint64_t start_ns = 0, end_ns = 0;
+		if (get_data_from_buf_and_resample(gf, start_ns, end_ns) == 0) {
+			size_t bytes_available = gf->resampled_buffer.size;
+			if (bytes_available >= sizeof(float)) {
+				size_t samples_available = bytes_available / sizeof(float);
+
+				constexpr size_t CHUNK = 1600; // ~100 ms @16k
+				constexpr size_t MAX_CHUNKS_PER_CALL =
+					10; // tweak: max ~1s per call
+				size_t cap_samples =
+					std::min(samples_available, CHUNK * MAX_CHUNKS_PER_CALL);
+
+				std::vector<float> tmp(cap_samples);
+
+				circlebuf_pop_front(&gf->resampled_buffer, tmp.data(),
+						    cap_samples * sizeof(float));
+
+				gf->google_stt->pushFloat16k(tmp.data(), cap_samples);
+			}
+		} else {
+			obs_log(LOG_DEBUG,
+				"CloudSTT: [filter_audio] ==> get_data_from_buf_and_resample returned no data");
+		}
 	}
 
 	return audio;
@@ -150,6 +173,12 @@ void transcription_filter_destroy(void *data)
 
 	obs_log(gf->log_level, "filter destroy");
 	shutdown_whisper_thread(gf);
+
+	// Stop Google STT if it's running
+	if (gf->google_stt) {
+		gf->google_stt->stop();
+		gf->google_stt.reset();
+	}
 
 	if (gf->resampler_to_whisper) {
 		audio_resampler_destroy(gf->resampler_to_whisper);
@@ -190,6 +219,10 @@ void transcription_filter_update(void *data, obs_data_t *s)
 	struct transcription_filter_data *gf =
 		static_cast<struct transcription_filter_data *>(data);
 	obs_log(gf->log_level, "LocalVocal filter update");
+
+	if (!obs_data_has_user_value(s, "local_transcription_disable_model")) {
+		obs_data_set_bool(s, "local_transcription_disable_model", false);
+	}
 
 	gf->log_level = (int)obs_data_get_int(s, "log_level");
 	gf->vad_mode = (int)obs_data_get_int(s, "vad_mode");
@@ -284,11 +317,12 @@ void transcription_filter_update(void *data, obs_data_t *s)
 	}
 
 	// Output file clearing on start
-	gf->file_output_clearing_on_start_enabled = obs_data_get_bool(s, "file_output_clearing_on_start");
+	gf->file_output_clearing_on_start_enabled =
+		obs_data_get_bool(s, "file_output_clearing_on_start");
 
 	// Clear files once per session after we know the output path (if enabled)
-	if (gf->file_output_clearing_on_start_enabled
-		&& !gf->cleared_files_on_start && !gf->output_file_path.empty()) {
+	if (gf->file_output_clearing_on_start_enabled && !gf->cleared_files_on_start &&
+	    !gf->output_file_path.empty()) {
 		clear_output_files_on_start(gf->output_file_path, language_codes_to_whisper);
 		gf->cleared_files_on_start = true;
 	}
@@ -444,6 +478,11 @@ void transcription_filter_update(void *data, obs_data_t *s)
 
 		apply_whisper_params_from_settings(gf->whisper_params, s);
 
+		// local transcription group checkbox (when checked = local transcription ENABLED)
+		bool local_transcription_enabled =
+			obs_data_get_bool(s, "local_transcription_disable_model");
+		gf->local_transcription_disable_model = local_transcription_enabled;
+
 		if (!new_translate || gf->translation_model_index != "whisper-based-translation") {
 			const char *whisper_language_select =
 				obs_data_get_string(s, "whisper_language_select");
@@ -474,23 +513,115 @@ void transcription_filter_update(void *data, obs_data_t *s)
 		if (gf->initial_creation) {
 			obs_log(LOG_INFO, "Initial filter creation and source enabled");
 
-			// source was enabled on creation
-			update_whisper_model(gf);
+			// Only load/update local Whisper model if local transcription is enabled via UI
+			if (gf->local_transcription_disable_model) {
+				update_whisper_model(gf);
+			} else {
+				obs_log(LOG_INFO,
+					"Local transcription disabled in UI — skipping local model load.");
+			}
+
+			// create cloud object only if cloud transcription is enabled (safe)
+			if (gf->cloud_transcription) {
+				if (!gf->google_stt) {
+					gf->google_stt = std::make_unique<GoogleSttStreamer>(gf);
+				}
+			}
+
 			gf->active = true;
 			gf->initial_creation = false;
 		} else {
-			// check if the whisper model selection has changed
-			const std::string new_model_path =
-				obs_data_get_string(s, "whisper_model_path") != nullptr
-					? obs_data_get_string(s, "whisper_model_path")
-					: "Whisper Tiny English (74Mb)";
-			if (gf->whisper_model_path != new_model_path) {
-				obs_log(LOG_INFO, "New model selected: %s", new_model_path.c_str());
-				update_whisper_model(gf);
+			// Only track whisper model selection changes when local transcription is enabled
+			if (gf->local_transcription_disable_model) {
+				const std::string new_model_path =
+					obs_data_get_string(s, "whisper_model_path") != nullptr
+						? obs_data_get_string(s, "whisper_model_path")
+						: "Whisper Tiny English (74Mb)";
+				if (gf->whisper_model_path != new_model_path) {
+					obs_log(gf->log_level, "New model selected: %s",
+						new_model_path.c_str());
+					update_whisper_model(gf);
+				}
 			}
 		}
 	} else {
-		obs_log(LOG_INFO, "Filter not enabled, not updating whisper model.");
+		obs_log(LOG_INFO, "Filter not enabled.");
+	}
+
+	// New settings for cloud transcription
+	gf->local_transcription_disable_model =
+		obs_data_get_bool(s, "local_transcription_disable_model");
+
+	bool new_cloud = obs_data_get_bool(s, "cloud_transcription");
+	gf->cloud_transcription = new_cloud;
+	gf->cloud_transcription_model = obs_data_get_string(s, "cloud_transcription_model");
+	gf->cloud_transcription_language = obs_data_get_string(s, "cloud_transcription_language");
+	gf->cloud_transcription_api_key = obs_data_get_string(s, "cloud_transcription_api_key");
+
+	auto to_google_locale = [](const char *code) -> std::string {
+		if (!code || !*code)
+			return "en-US";
+
+		std::string c = code;
+
+		std::string lower = c;
+		std::transform(lower.begin(), lower.end(), lower.begin(),
+			       [](unsigned char ch) { return (char)std::tolower(ch); });
+
+		auto starts_with = [](const std::string &s, const char *prefix) {
+			return s.rfind(prefix, 0) == 0;
+		};
+
+		if (lower == "auto" || starts_with(lower, "en"))
+			return "en-US";
+		if (starts_with(lower, "uk"))
+			return "uk-UA";
+		if (starts_with(lower, "ru"))
+			return "ru-RU";
+		if (starts_with(lower, "de"))
+			return "de-DE";
+		if (starts_with(lower, "fr"))
+			return "fr-FR";
+		if (starts_with(lower, "es"))
+			return "es-ES";
+		if (starts_with(lower, "pl"))
+			return "pl-PL";
+
+		return c;
+	};
+
+	// manage Google STT lifecycle (restart on any config change)
+	if (gf->cloud_transcription) {
+		const std::string key = gf->cloud_transcription_api_key;
+
+		if (key.empty()) {
+			obs_log(LOG_WARNING,
+				"CloudSTT: cloud_transcription enabled but cloud_transcription_api_key is empty - stopping cloud STT");
+			if (gf->google_stt) {
+				gf->google_stt->stop();
+			}
+		} else {
+			if (!gf->google_stt) {
+				gf->google_stt = std::make_unique<GoogleSttStreamer>(gf);
+			}
+
+			const char *lang_c = nullptr;
+			if (!gf->cloud_transcription_language.empty()) {
+				lang_c = gf->cloud_transcription_language.c_str();
+			} else {
+				lang_c = gf->whisper_params.language;
+			}
+
+			std::string g_locale = to_google_locale(lang_c);
+
+			gf->google_stt->stop();
+			gf->google_stt->start(key, g_locale);
+		}
+	} else {
+		if (gf->google_stt) {
+			gf->google_stt->stop();
+			gf->google_stt.reset();
+		}
 	}
 }
 

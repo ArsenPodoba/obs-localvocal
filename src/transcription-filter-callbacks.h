@@ -14,7 +14,7 @@ std::string send_sentence_to_translation(const std::string &sentence,
 void audio_chunk_callback(struct transcription_filter_data *gf, const float *pcm32f_data,
 			  size_t frames, int vad_state, const DetectionResultWithText &result);
 
-void set_text_callback(struct transcription_filter_data *gf,
+void set_text_callback(uint64_t possible_end_ts, struct transcription_filter_data *gf,
 		       const DetectionResultWithText &resultIn);
 
 void clear_current_caption(transcription_filter_data *gf_);

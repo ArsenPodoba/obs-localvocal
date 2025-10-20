@@ -62,4 +62,7 @@ size_t get_last_line_length(const std::string& file_path);
 // Split text into lines of max length without breaking words
 std::vector<std::string> split_into_lines(const std::string &text, size_t max_len, size_t current_line_size);
 
+// Ensure the string ends with a sentence-ending punctuation
+void ensure_sentence_end(std::string& s);
+
 #endif // TRANSCRIPTION_UTILS_H

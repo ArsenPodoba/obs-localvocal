@@ -19,6 +19,7 @@
 #include "transcription-utils.h"
 #include "translation/translation.h"
 #include "translation/translation-includes.h"
+#include "cloud-utils/cloud-stt.h"
 #include "whisper-utils/whisper-language.h"
 #include "whisper-utils/whisper-utils.h"
 #include "whisper-utils/whisper-model-utils.h"
@@ -144,10 +145,15 @@ void send_sentence_to_file(struct transcription_filter_data *gf,
 			gf->output_file_path.c_str());
 		// Write raw sentence to text file (non-srt format)
 		try {
+			auto sentence_to_write = sentence;
+			ensure_sentence_end(sentence_to_write);
+
 			const auto last_line_length = get_last_line_length(file_path);
 			std::ofstream output_file(file_path, openmode);
-			for (const auto& sentence : split_into_lines(sentence, gf->file_output_max_line_length, last_line_length)) {
-				output_file << sentence;
+			for (const auto &line :
+			     split_into_lines(sentence_to_write, gf->file_output_max_line_length,
+					      last_line_length)) {
+				output_file << line;
 			}
 		} catch (const std::ofstream::failure &e) {
 			obs_log(LOG_ERROR, "Exception opening/writing/closing file: %s", e.what());
@@ -758,11 +764,14 @@ void enable_callback(void *data_, calldata_t *cd)
 		obs_log(gf_->log_level, "enable_callback: enable");
 		gf_->active = true;
 		reset_caption_state(gf_);
-		update_whisper_model(gf_);
 	} else {
 		obs_log(gf_->log_level, "enable_callback: disable");
 		gf_->active = false;
 		reset_caption_state(gf_);
-		shutdown_whisper_thread(gf_);
+		if (gf_->google_stt) {
+			obs_log(LOG_INFO,
+				"CloudSTT: [enable_callback] ==> Filter disabled. Calling google_stt->stop().");
+			gf_->google_stt->stop();
+		}
 	}
 }

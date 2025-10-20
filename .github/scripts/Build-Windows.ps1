@@ -62,6 +62,27 @@ function Build {
         $CmakeBuildArgs = @()
         $CmakeInstallArgs = @()
 
+        $VcpkgRoot = Join-Path $ProjectRoot 'external/vcpkg'
+        $VcpkgExe  = Join-Path $VcpkgRoot 'vcpkg.exe'
+        $VcpkgToolchain = Join-Path $VcpkgRoot 'scripts/buildsystems/vcpkg.cmake'
+        $VcpkgTriplet = 'x64-windows'
+        $VcpkgPrefix    = Join-Path $VcpkgRoot 'installed/x64-windows'
+
+        $spInc = Join-Path $VcpkgRoot 'installed/x64-windows/include'
+        $spLibRel = Join-Path $VcpkgRoot 'installed/x64-windows/lib/sentencepiece.lib'
+        $spLibDbg = Join-Path $VcpkgRoot 'installed/x64-windows/debug/lib/sentencepieced.lib'
+
+        # Bootstrap vcpkg if needed
+        if (-not (Test-Path $VcpkgExe)) {
+            Write-Host "Bootstrapping vcpkg..."
+            & "$VcpkgRoot/bootstrap-vcpkg.bat"
+        }
+
+        # Ensure grpc (and deps) are installed
+        Write-Host "Ensuring vcpkg dependencies..."
+        & $VcpkgExe install "grpc:$VcpkgTriplet"
+        & $VcpkgExe install "sentencepiece:$VcpkgTriplet"
+
         if ( $VerbosePreference -eq 'Continue' ) {
             $CmakeBuildArgs += ('--verbose')
             $CmakeInstallArgs += ('--verbose')
@@ -75,6 +96,11 @@ function Build {
 
         $CmakeArgs += @(
             '--preset', $Preset
+            "-DSP_USE_MANUAL=ON",
+            "-DSP_INCLUDE=$spInc",
+            "-DSP_LIBRARY_RELEASE=$spLibRel",
+            "-DSP_LIBRARY_DEBUG=$spLibDbg",
+            "-DCMAKE_PREFIX_PATH=$VcpkgPrefix"
         )
 
         $CmakeBuildArgs += @(

@@ -242,3 +242,19 @@ std::vector<std::string> split_into_lines(const std::string& text, size_t max_le
 
 	return lines;
 }
+
+void ensure_sentence_end(std::string& s) {
+    // remove trailing spaces
+    while (!s.empty() && std::isspace((unsigned char)s.back()))
+        s.pop_back();
+
+    if (s.empty())
+        return;
+
+    // if last char is sentence-ending punctuation, do nothing
+    const std::string endings = ".,!?)]}'\"";
+    if (endings.find(s.back()) != std::string::npos) {
+        return;
+    }
+    s.push_back('.');
+}

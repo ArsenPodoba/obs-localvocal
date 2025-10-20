@@ -55,4 +55,8 @@ vad_state vad_based_segmentation(transcription_filter_data *gf, vad_state last_v
 vad_state hybrid_vad_segmentation(transcription_filter_data *gf, vad_state last_vad_state);
 void initialize_vad(transcription_filter_data *gf, const char *silero_vad_model_file);
 
+int get_data_from_buf_and_resample(transcription_filter_data *gf,
+				   uint64_t &start_timestamp_offset_ns,
+				   uint64_t &end_timestamp_offset_ns);
+
 #endif // VAD_PROCESSING_H

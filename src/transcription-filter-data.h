@@ -21,6 +21,7 @@
 
 #include "translation/translation.h"
 #include "translation/translation-includes.h"
+#include "cloud-utils/cloud-stt.h"
 #include "whisper-utils/silero-vad-onnx.h"
 #include "whisper-utils/whisper-processing.h"
 #include "whisper-utils/token-buffer-thread.h"
@@ -114,8 +115,15 @@ struct transcription_filter_data {
 	bool cleared_files_on_start;
 	// Max length of file line
 	int file_output_max_line_length;
-  // Output file clearing on start option
-  bool file_output_clearing_on_start_enabled;
+	// Output file clearing on start option
+	bool file_output_clearing_on_start_enabled;
+	// Add Cloud STT streamer holder
+	std::unique_ptr<class GoogleSttStreamer> google_stt;
+	bool local_transcription_disable_model = false; // from UI checkbox
+	bool cloud_transcription = false;
+	std::string cloud_transcription_model;
+	std::string cloud_transcription_language;
+	std::string cloud_transcription_api_key;
 
 	/* PCM buffers */
 	float *copy_buffers[MAX_PREPROC_CHANNELS];

@@ -1,4 +1,3 @@
-
 #include <obs.h>
 #include <obs-module.h>
 #include <obs-frontend-api.h>
@@ -117,7 +116,8 @@ bool file_output_select_changed(obs_properties_t *props, obs_property_t *propert
 	const bool show_hide = obs_data_get_bool(settings, "file_output_enable");
 	for (const std::string &prop_name :
 	     {"subtitle_output_filename", "subtitle_save_srt", "truncate_output_file",
-	      "only_while_recording", "rename_file_to_match_recording", "file_output_info", "file_output_max_line_length", "file_output_clearing_on_start"}) {
+	      "only_while_recording", "rename_file_to_match_recording", "file_output_info",
+	      "file_output_max_line_length", "file_output_clearing_on_start"}) {
 		obs_property_set_visible(obs_properties_get(props, prop_name.c_str()), show_hide);
 	}
 	return true;
@@ -195,10 +195,30 @@ bool translation_external_model_selection(obs_properties_t *props, obs_property_
 void add_transcription_group_properties(obs_properties_t *ppts,
 					struct transcription_filter_data *gf)
 {
-	// add "Transcription" group
+
 	obs_properties_t *transcription_group = obs_properties_create();
-	obs_properties_add_group(ppts, "transcription_group", MT_("transcription_group"),
-				 OBS_GROUP_NORMAL, transcription_group);
+	// Use the same setting key "local_transcription_disable_model" so visibility state is stored there
+	obs_property_t *transcription_group_prop = obs_properties_add_group(
+		ppts, "local_transcription_disable_model", MT_("Local Transcription"),
+		OBS_GROUP_CHECKABLE, transcription_group);
+
+	obs_property_set_modified_callback(
+		transcription_group_prop,
+		[](obs_properties_t *props, obs_property_t *property,
+		   obs_data_t *settings) -> bool {
+			UNUSED_PARAMETER(property);
+			// the group checkbox stores "enabled" state — show fields when enabled
+			const bool enabled =
+				obs_data_get_bool(settings, "local_transcription_disable_model");
+			obs_property_t *ml = obs_properties_get(props, "whisper_model_path");
+			obs_property_t *external =
+				obs_properties_get(props, "whisper_model_path_external");
+			if (ml)
+				obs_property_set_visible(ml, enabled);
+			if (external)
+				obs_property_set_visible(external, enabled);
+			return true;
+		});
 
 	// Add a list of available whisper models to download
 	obs_property_t *whisper_models_list = obs_properties_add_list(
@@ -223,6 +243,59 @@ void add_transcription_group_properties(obs_properties_t *ppts,
 
 	// Add a callback to the model list to handle the external model file selection
 	obs_property_set_modified_callback2(whisper_models_list, external_model_file_selection, gf);
+}
+
+void add_cloud_transcription_group_properties(obs_properties_t *ppts)
+{
+	// create cloud transcription group (checkable)
+	obs_properties_t *cloud_group = obs_properties_create();
+	obs_property_t *cloud_group_prop =
+		obs_properties_add_group(ppts, "cloud_transcription", MT_("Cloud Transcription"),
+					 OBS_GROUP_CHECKABLE, cloud_group);
+
+	// show/hide inner props when checkbox toggled
+	obs_property_set_modified_callback(
+		cloud_group_prop,
+		[](obs_properties_t *props, obs_property_t *property,
+		   obs_data_t *settings) -> bool {
+			UNUSED_PARAMETER(property);
+			const bool enabled = obs_data_get_bool(settings, "cloud_transcription");
+
+			for (const char *name : {
+				     "cloud_transcription_model",
+				     "cloud_transcription_language",
+				     "cloud_transcription_api_key",
+			     }) {
+				if (auto *p = obs_properties_get(props, name)) {
+					obs_property_set_visible(p, enabled);
+				}
+			}
+			return true;
+		});
+
+	// model/provider dropdown (for now single item)
+	obs_property_t *cloud_model_list = obs_properties_add_list(
+		cloud_group, "cloud_transcription_model", MT_("Cloud Transcription Model"),
+		OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+	obs_property_list_add_string(cloud_model_list, "Google Cloud STT", "google_cloud_stt");
+
+	// language dropdown – тільки мови, які є в to_google_locale()
+	obs_property_t *cloud_lang_list = obs_properties_add_list(
+		cloud_group, "cloud_transcription_language", MT_("Cloud Transcription Language"),
+		OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+
+	// значення – коди, які знає to_google_locale
+	obs_property_list_add_string(cloud_lang_list, "English (en-US)", "en");
+	obs_property_list_add_string(cloud_lang_list, "Ukrainian (uk-UA)", "uk");
+	obs_property_list_add_string(cloud_lang_list, "Russian (ru-RU)", "ru");
+	obs_property_list_add_string(cloud_lang_list, "German (de-DE)", "de");
+	obs_property_list_add_string(cloud_lang_list, "French (fr-FR)", "fr");
+	obs_property_list_add_string(cloud_lang_list, "Spanish (es-ES)", "es");
+	obs_property_list_add_string(cloud_lang_list, "Polish (pl-PL)", "pl");
+
+	// API key input (password)
+	obs_properties_add_text(cloud_group, "cloud_transcription_api_key",
+				MT_("Cloud Transcription API Key"), OBS_TEXT_PASSWORD);
 }
 
 void add_translation_cloud_group_properties(obs_properties_t *ppts)
@@ -473,7 +546,7 @@ void add_file_output_group_properties(obs_properties_t *ppts)
 	obs_properties_add_bool(file_output_group, "rename_file_to_match_recording",
 				MT_("rename_file_to_match_recording"));
 	obs_properties_add_int_slider(file_output_group, "file_output_max_line_length",
-				MT_("Max length of file line"), 20, 200, 1);
+				      MT_("Max length of file line"), 20, 200, 1);
 	obs_properties_add_bool(file_output_group, "file_output_clearing_on_start",
 				MT_("Output file clearing on start"));
 	obs_property_set_modified_callback(file_output_group_prop, file_output_select_changed);
@@ -657,8 +730,8 @@ obs_properties_t *transcription_filter_properties(void *data)
 	obs_property_list_add_int(advanced_settings, MT_("advanced_mode"), 1);
 	obs_property_set_modified_callback(advanced_settings, advanced_settings_callback);
 
-	add_general_group_properties(ppts);
 	add_transcription_group_properties(ppts, gf);
+	add_cloud_transcription_group_properties(ppts);
 	add_translation_group_properties(ppts);
 	add_translation_cloud_group_properties(ppts);
 #ifdef ENABLE_WEBVTT
@@ -699,6 +772,10 @@ void transcription_filter_defaults(obs_data_t *s)
 	obs_data_set_default_bool(s, "log_words", false);
 	obs_data_set_default_bool(s, "caption_to_stream", false);
 	obs_data_set_default_string(s, "whisper_model_path", "Whisper Tiny English (74Mb)");
+	obs_data_set_default_bool(s, "local_transcription_disable_model", false);
+	obs_data_set_default_bool(s, "cloud_transcription", false);
+	obs_data_set_default_string(s, "cloud_transcription_model", "google_cloud_stt");
+	obs_data_set_default_string(s, "cloud_transcription_api_key", "");
 	obs_data_set_default_string(s, "whisper_language_select", "en");
 	obs_data_set_default_string(s, "subtitle_sources", "none");
 	obs_data_set_default_bool(s, "process_while_muted", false);
@@ -751,4 +828,7 @@ void transcription_filter_defaults(obs_data_t *s)
 
 	// Whisper parameters
 	apply_whisper_params_defaults_on_settings(s);
+
+	// cloud transcription language default
+	obs_data_set_default_string(s, "cloud_transcription_language", "en");
 }

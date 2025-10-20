@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.16...3.26)
 
+set(BUILD_SHARED_LIBS OFF)
+
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/common/bootstrap.cmake" NO_POLICY_SCOPE)
 
 project(${_name} VERSION ${_version})
@@ -15,6 +17,7 @@ include(helpers)
 add_library(${CMAKE_PROJECT_NAME} MODULE)
 
 find_package(libobs REQUIRED)
+find_package(gRPC CONFIG REQUIRED)
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs)
 
 if(ENABLE_FRONTEND_API)
@@ -66,8 +69,18 @@ include(cmake/BuildWhispercpp.cmake)
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Whispercpp)
 
 include(cmake/BuildCTranslate2.cmake)
-include(cmake/BuildSentencepiece.cmake)
-target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE ct2 sentencepiece)
+if(NOT TARGET sentencepiece::sentencepiece)
+  add_library(sentencepiece::sentencepiece UNKNOWN IMPORTED)
+  set_target_properties(sentencepiece::sentencepiece PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "${SP_INCLUDE}"
+    IMPORTED_CONFIGURATIONS "Debug;Release"
+    IMPORTED_LOCATION_RELEASE "${SP_LIBRARY_RELEASE}"
+    IMPORTED_LOCATION_DEBUG   "${SP_LIBRARY_DEBUG}")
+endif()
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE ct2 sentencepiece::sentencepiece)
+
+include(cmake/BuildGoogleAPIs.cmake)
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE google-apis)
 
 set(USE_SYSTEM_ONNXRUNTIME
     OFF
@@ -134,6 +147,7 @@ target_sources(
           src/whisper-utils/silero-vad-onnx.cpp
           src/whisper-utils/token-buffer-thread.cpp
           src/whisper-utils/vad-processing.cpp
+          src/cloud-utils/cloud-stt.cpp
           src/translation/language_codes.cpp
           src/translation/translation.cpp
           src/translation/translation-utils.cpp
@@ -144,6 +158,13 @@ target_sources(
 add_subdirectory(src/translation/cloud-translation)
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
+
+file(GLOB VCPKG_DLLS "${CMAKE_CURRENT_SOURCE_DIR}/external/vcpkg/installed/x64-windows/bin/*.dll")
+if(VCPKG_DLLS)
+  install(FILES ${VCPKG_DLLS}
+          DESTINATION "bin/64bit"
+          OPTIONAL)
+endif()
 
 if(ENABLE_TESTS)
   add_subdirectory(src/tests)
