@@ -196,6 +196,11 @@ struct transcription_filter_data {
 	std::string whisper_model_file_currently_loaded;
 	bool whisper_model_loaded_new;
 
+	// for incremental file writing
+	std::string cloud_file_fixed_prefix;
+	std::string cloud_file_last_partial;
+	bool cloud_file_initialized = false;
+
 	// Use std for thread and mutex
 	std::thread whisper_thread;
 

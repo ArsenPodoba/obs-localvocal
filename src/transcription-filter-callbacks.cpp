@@ -54,6 +54,9 @@ void audio_chunk_callback(struct transcription_filter_data *gf, const float *pcm
 	// stub
 }
 
+static void update_cloud_realtime_file(transcription_filter_data *gf, bool is_final,
+				       const std::string &text);
+
 std::string send_sentence_to_translation(const std::string &sentence,
 					 struct transcription_filter_data *gf,
 					 const std::string &source_language)
@@ -342,9 +345,20 @@ void set_text_callback(uint64_t possible_end_ts, struct transcription_filter_dat
 						       translated_sentence_local, gf);
 			}
 		}
-		if (gf->save_to_file && gf->output_file_path != "") {
-			send_translated_sentence_to_file(gf, result, translated_sentence_local,
-							 gf->target_lang);
+		// if (gf->save_to_file && gf->output_file_path != "") {
+		// 	send_translated_sentence_to_file(gf, result, translated_sentence_local,
+		// 					 gf->target_lang);
+		// }
+		if (gf->save_to_file && !gf->output_file_path.empty()) {
+			if (gf->cloud_transcription && !gf->save_srt &&
+			    (result.result == DETECTION_RESULT_SPEECH ||
+			     result.result == DETECTION_RESULT_PARTIAL)) {
+				update_cloud_realtime_file(
+					gf, result.result == DETECTION_RESULT_SPEECH, str_copy);
+			} else if (result.result == DETECTION_RESULT_SPEECH) {
+				send_sentence_to_file(gf, result, str_copy, gf->output_file_path,
+						      true);
+			}
 		}
 	}
 
@@ -693,6 +707,9 @@ void clear_current_caption(transcription_filter_data *gf_)
 	gf_->translation_ctx.last_translation_tokens.clear();
 	gf_->last_transcription_sentence.clear();
 	gf_->cleared_last_sub = true;
+	gf_->cloud_file_fixed_prefix.clear();
+	gf_->cloud_file_last_partial.clear();
+	gf_->cloud_file_initialized = false;
 }
 
 void reset_caption_state(transcription_filter_data *gf_)
@@ -711,6 +728,66 @@ void reset_caption_state(transcription_filter_data *gf_)
 		}
 	}
 	gf_->clear_buffers = true;
+}
+
+static void update_cloud_realtime_file(transcription_filter_data *gf, bool is_final,
+				       const std::string &text)
+{
+	if (!gf->save_to_file || gf->output_file_path.empty() || gf->save_srt)
+		return;
+
+	if (gf->save_only_while_recording && !obs_frontend_recording_active())
+		return;
+
+	if (!gf->cloud_file_initialized) {
+		gf->cloud_file_initialized = true;
+
+		if (!gf->file_output_clearing_on_start_enabled && !gf->truncate_output_file) {
+			try {
+				std::ifstream in(gf->output_file_path);
+				if (in.is_open()) {
+					std::string line, existing;
+					while (std::getline(in, line)) {
+						if (!existing.empty())
+							existing += "\n";
+						existing += line;
+					}
+					gf->cloud_file_fixed_prefix = existing;
+				}
+			} catch (...) {
+			}
+		}
+	}
+
+	if (is_final) {
+		if (!gf->cloud_file_fixed_prefix.empty())
+			gf->cloud_file_fixed_prefix += "\n";
+		gf->cloud_file_fixed_prefix += text;
+		gf->cloud_file_last_partial.clear();
+	} else {
+		gf->cloud_file_last_partial = text;
+	}
+
+	std::string full = gf->cloud_file_fixed_prefix;
+	if (!gf->cloud_file_last_partial.empty()) {
+		if (!full.empty())
+			full += "\n";
+		full += gf->cloud_file_last_partial;
+	}
+
+	try {
+		std::vector<std::string> lines =
+			split_into_lines(full, (size_t)gf->file_output_max_line_length, 0);
+
+		std::ofstream output_file(gf->output_file_path, std::ios::out | std::ios::trunc);
+		if (!output_file.is_open())
+			return;
+
+		for (const auto &line : lines) {
+			output_file << line;
+		}
+	} catch (...) {
+	}
 }
 
 void media_play_callback(void *data_, calldata_t *cd)

@@ -303,6 +303,10 @@ void transcription_filter_update(void *data, obs_data_t *s)
 		} else {
 			obs_log(gf->log_level, "output file path is empty, but selected to save");
 		}
+
+		gf->cloud_file_fixed_prefix.clear();
+		gf->cloud_file_last_partial.clear();
+		gf->cloud_file_initialized = false;
 	}
 
 	// Read "Max length of file line"
